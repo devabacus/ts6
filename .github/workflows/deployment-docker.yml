@@ -61,11 +61,24 @@ jobs:
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
 
-      - name: Create or Update Kubernetes Secret
+      # НОВЫЙ ШАГ: Создаем секрет для доступа к приватному Docker Registry
+      - name: Create or Update Image Pull Secret
         run: |
-          kubectl create secret generic serverpod-secrets-ts6             --from-literal=database-password='${{ secrets.DB_PASSWORD }}'             --from-literal=redis-password='${{ secrets.REDIS_PASSWORD }}'             --from-literal=service-secret='${{ secrets.SERVICE_SECRET }}'             --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry timeweb-registry-secret \
+            --docker-server=dbe81550-wise-chickadee.registry.twcstorage.ru \
+            --docker-username=${{ secrets.REGISTRY_USER }} \
+            --docker-password=${{ secrets.REGISTRY_PASSWORD }} \
+            --docker-email=${{ secrets.REGISTRY_EMAIL }} \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-      # НОВЫЙ ШАГ: Вписываем правильный тег в манифесты
+      - name: Create or Update Kubernetes Secret for Serverpod
+        run: |
+          kubectl create secret generic serverpod-secrets-ts6 \
+            --from-literal=database-password='${{ secrets.DB_PASSWORD }}' \
+            --from-literal=redis-password='${{ secrets.REDIS_PASSWORD }}' \
+            --from-literal=service-secret='${{ secrets.SERVICE_SECRET }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Update manifests with new image tag
         run: |
           sed -i 's|image: .*|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:${{ needs.build-and-push-image.outputs.tag }}|g' ts6_server/k8s/deployment.yaml

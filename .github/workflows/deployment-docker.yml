@@ -61,7 +61,6 @@ jobs:
         with:
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
 
-      # НОВЫЙ ШАГ: Создаем секрет для доступа к приватному Docker Registry
       - name: Create or Update Image Pull Secret
         run: |
           kubectl create secret docker-registry timeweb-registry-secret \
@@ -81,24 +80,39 @@ jobs:
 
       - name: Update manifests with new image tag
         run: |
-          sed -i 's|image: .*|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:${{ needs.build-and-push-image.outputs.tag }}|g' ts6_server/k8s/deployment.yaml
-          sed -i 's|image: .*|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:${{ needs.build-and-push-image.outputs.tag }}|g' ts6_server/k8s/job.yaml
+          echo "--- Updating manifests with image tag: ${{ needs.build-and-push-image.outputs.tag }} ---"
+          
+          # Более точная команда sed, которая заменяет конкретную строку
+          sed -i 's|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:latest|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:${{ needs.build-and-push-image.outputs.tag }}|g' ts6_server/k8s/deployment.yaml
+          sed -i 's|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:latest|image: dbe81550-wise-chickadee.registry.twcstorage.ru/ts6-server:${{ needs.build-and-push-image.outputs.tag }}|g' ts6_server/k8s/job.yaml
+          
+          echo "--- Verifying deployment.yaml content after sed ---"
+          cat ts6_server/k8s/deployment.yaml
+          
+          echo "--- Verifying job.yaml content after sed ---"
+          cat ts6_server/k8s/job.yaml
 
-      - name: Apply Kubernetes manifests
+      # ОБЪЕДИНЕННЫЙ ШАГ ПРИМЕНЕНИЯ МАНИФЕСТОВ
+      - name: Apply all Kubernetes manifests
         run: |
+          # Сначала применяем конфигурации и сервисы
           kubectl apply -f ts6_server/k8s/configmap.yaml
           kubectl apply -f ts6_server/k8s/service.yaml
           kubectl apply -f ts6_server/k8s/ingress.yaml
-          # Удаляем старый Job перед применением нового, чтобы он гарантированно запустился
+
+          # Затем применяем основной deployment
+          kubectl apply -f ts6_server/k8s/deployment.yaml
+          
+          # И, наконец, запускаем задачу миграции
           kubectl delete job serverpod-migration-job-ts6 --ignore-not-found=true
           kubectl apply -f ts6_server/k8s/job.yaml
-          
+      
+      # Ожидаем завершения миграции
       - name: Wait for migration job to complete
         run: kubectl wait --for=condition=complete job/serverpod-migration-job-ts6 --timeout=5m
 
-      - name: Deploy main application
-        run: |
-          kubectl apply -f ts6_server/k8s/deployment.yaml
-          kubectl rollout status deployment/ts6-server-deployment --timeout=2m
+      # Проверяем статус развертывания
+      - name: Check deployment rollout status
+        run: kubectl rollout status deployment/ts6-server-deployment --timeout=2m
 
     
